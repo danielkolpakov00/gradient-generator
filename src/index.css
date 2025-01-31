@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: 'Reddit Mono';
+  src: url('/fonts/RedditMono-Light.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  * {
+    font-family: 'Reddit Mono', monospace;
+    font-weight: 200;
+  }
+  html {
+    @apply bg-custom-bg font-sans;
+  }
+  body {
+    @apply text-custom-text;
+  }
+}
