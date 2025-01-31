@@ -90,7 +90,7 @@ const OtherPanel = () => {
           >
             {/* Text placement during loading */}
             {!currentMessage && (
-              <div className="text-center text-xs opacity-50">
+              <div className="text-center text-xs">
                 Loading...
               </div>
             )}

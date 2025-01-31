@@ -19,12 +19,6 @@ const Slider = ({ label, value, onChange, min = 0, max = 100 }) => (
 
 const SettingsPanel = () => {
   const {
-    gradType,
-    setGradType,
-    blendMode,
-    setBlendMode,
-    gradDepth,
-    setGradDepth,
     gradIntensity,
     setGradIntensity,
     gradComplexity,
@@ -33,15 +27,21 @@ const SettingsPanel = () => {
     setGradRotation,
     gradScale,
     setGradScale,
+    gradDistortion,
+    setGradDistortion,
+    gradColorIndex,
+    setGradColorIndex,
     randomizeGradient,
     triggerNewMessage,
   } = useGradient();
 
   const handleSliderChange = (setter, value) => {
+    // Immediate update without triggering re-render
     setter(value);
-    if (typeof triggerNewMessage === 'function') {
-      triggerNewMessage();
-    }
+    // Optional: only trigger message on slider release
+    // if (typeof triggerNewMessage === 'function') {
+    //   triggerNewMessage();
+    // }
   };
 
   const handleExport = () => {
@@ -74,8 +74,18 @@ const SettingsPanel = () => {
     }
   };
 
+  const generateRandomValues = () => {
+    // Generate random values within meaningful ranges
+    setGradIntensity(Math.floor(Math.random() * 31) + 70);  // 70-100
+    setGradComplexity(Math.floor(Math.random() * 41) + 40); // 40-80
+    setGradRotation(Math.floor(Math.random() * 360));       // 0-360
+    setGradScale(Math.floor(Math.random() * 151) + 50);     // 50-200
+    setGradDistortion(Math.floor(Math.random() * 31) + 40); // 40-70
+    setGradColorIndex(Math.floor(Math.random() * 100));     // 0-100
+  };
+
   const handleRandomize = () => {
-    randomizeGradient();
+    generateRandomValues();
     if (typeof triggerNewMessage === 'function') {
       triggerNewMessage();
     }
@@ -84,21 +94,6 @@ const SettingsPanel = () => {
   return (
     <div className="flex h-full flex-col gap-6 p-4 pt-12 text-white">
       <div className="grid grid-cols-1 gap-6">
-        <Slider
-          label="GRAD_TYPE"
-          value={gradType}
-          onChange={(value) => handleSliderChange(setGradType, value)}
-        />
-        <Slider
-          label="BLEND_MODE"
-          value={blendMode}
-          onChange={(value) => handleSliderChange(setBlendMode, value)}
-        />
-        <Slider
-          label="GRAD_DEPTH"
-          value={gradDepth}
-          onChange={(value) => handleSliderChange(setGradDepth, value)}
-        />
         <Slider
           label="GRAD_INTENSITY"
           value={gradIntensity}
@@ -121,17 +116,27 @@ const SettingsPanel = () => {
           onChange={(value) => handleSliderChange(setGradScale, value)}
           max={200}
         />
+        <Slider
+          label="GRAD_DISTORTION"
+          value={gradDistortion}
+          onChange={(value) => handleSliderChange(setGradDistortion, value)}
+        />
+        <Slider
+          label="GRAD_COLOR_INDEX"
+          value={gradColorIndex}
+          onChange={(value) => handleSliderChange(setGradColorIndex, value)}
+        />
       </div>
       <div className="mt-auto flex justify-between items-center">
         <button
           onClick={handleRandomize}
-          className="text-white/50 text-xs hover:text-white"
+          className="text-white text-xs hover:text-white/50 border border-white px-1 py-1  hover:border-white/50 transition-all"
         >
           RAND_GRAD
         </button>
         <button
           onClick={handleExport}
-          className="text-white/50 text-xs hover:text-white"
+          className="text-white text-xs hover:text-white/50 border border-white px-1 py-1  hover:border-white/50 transition-all"
         >
           EXPORT_GRAD
         </button>
