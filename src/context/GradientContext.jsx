@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, useCallback } from "react";
+import { createContext, useContext, useState, useCallback, useEffect } from "react";
 import PropTypes from "prop-types";
+import { isLowEndDevice } from '../utils/performanceUtils';
 
 export const GradientContext = createContext(null);
 
@@ -19,18 +20,44 @@ export function GradientProvider({ children }) {
   const [gradRotation, setGradRotation] = useState(0);
   const [gradScale, setGradScale] = useState(100);
   const [gradMouseEvents, setGradMouseEvents] = useState(false);
-  const [animGrad, setAnimGrad] = useState(true);
+  const [animGrad, setAnimGrad] = useState(true); // Confirm animation is enabled by default
   const [gradInvert, setGradInvert] = useState(false);
   const [currentMessage, setCurrentMessage] = useState('');
-  const [gradColorIndex, setGradColorIndex] = useState(50);
+  const [gradColorIndex, setGradColorIndex] = useState(0.5); // Changed from 50 to 0.5
+  const [gradSpeed, setGradSpeed] = useState(1.0);
+  const [gradBlur, setGradBlur] = useState(30);
+  const [gradBrightness, setGradBrightness] = useState(100);
+
+  // Auto-detect low-end devices during context initialization
+  const [lowEndMode, setLowEndMode] = useState(() => {
+    // Try to get from localStorage first, then fall back to auto-detection
+    const savedMode = localStorage.getItem('lowEndMode');
+    if (savedMode !== null) {
+      return savedMode === 'true';
+    }
+    // Auto-detect based on device capabilities
+    return isLowEndDevice();
+  });
+
+  // Save low-end mode preference when it changes
+  useEffect(() => {
+    localStorage.setItem('lowEndMode', lowEndMode);
+  }, [lowEndMode]);
+
+  // Debug the animation state when it changes
+  useEffect(() => {
+    console.log("Animation state updated:", animGrad);
+  }, [animGrad]);
 
   const randomizeGradient = () => {
     setGradIntensity(85 + Math.random() * 15);  // 85-100
     setGradComplexity(75 + Math.random() * 25);  // 75-100
     setGradRotation(Math.random() * 360);
     setGradScale(150 + Math.random() * 50);  // 150-200
-    setGradColorIndex(Math.random() * 100);
+    setGradColorIndex(Math.random()); // Changed from Math.random() * 100
     setGradDistortion(60 + Math.random() * 40);  // 60-100
+    setGradSpeed(0.1 + Math.random() * 3.9); // 0.1-4.0 speed range for more dramatic changes
+    setGradBlur(20 + Math.random() * 60);        // 20-80
   };
 
   const triggerNewMessage = useCallback(() => {
@@ -62,6 +89,10 @@ export function GradientProvider({ children }) {
     currentMessage,
     triggerNewMessage,
     gradColorIndex, setGradColorIndex,
+    gradSpeed, setGradSpeed,
+    gradBlur, setGradBlur,
+    gradBrightness, setGradBrightness,
+    lowEndMode, setLowEndMode,
   };
 
   return (
