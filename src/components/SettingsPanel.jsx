@@ -1,7 +1,8 @@
 import { useGradient } from "../context/GradientContext";
-import { useRef } from 'react';
+import { useRef, memo, useCallback } from 'react';
 
-const Slider = ({ label, value, onChange, min = 0, max = 100, step = 1 }) => (
+// Memoize the Slider component to avoid re-renders when other sliders change
+const Slider = memo(({ label, value, onChange, min = 0, max = 100, step = 1 }) => (
   <div className="flex flex-col gap-1">
     <label className="text-xs font-bold uppercase">{label}</label>
     <input
@@ -17,9 +18,41 @@ const Slider = ({ label, value, onChange, min = 0, max = 100, step = 1 }) => (
     />
     <span className="text-xs text-white/50">{value}</span>
   </div>
-);
+));
 
-const SettingsPanel = ({ visualPanelRef }) => {
+Slider.displayName = 'Slider';
+
+// Add a new component for color mode selection
+const ColorModeSelector = memo(({ value, onChange }) => {
+  const modes = [
+    { id: 0, name: "WARM" },
+    { id: 1, name: "COOL" },
+    { id: 2, name: "PASTEL" },
+    { id: 3, name: "VIBRANT" },
+    { id: 4, name: "MULTI" }
+  ];
+  
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs font-bold uppercase">COLOR_MODE</label>
+      <div className="flex flex-wrap gap-2">
+        {modes.map(mode => (
+          <button
+            key={mode.id}
+            onClick={() => onChange(mode.id)}
+            className={`text-xs px-2 py-1 border ${value === mode.id ? 'bg-white text-black' : 'border-white/50 text-white/70'}`}
+          >
+            {mode.name}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+});
+
+ColorModeSelector.displayName = 'ColorModeSelector';
+
+const SettingsPanel = memo(({ visualPanelRef }) => {
   const {
     gradIntensity,
     setGradIntensity,
@@ -37,48 +70,66 @@ const SettingsPanel = ({ visualPanelRef }) => {
     setGradSpeed,
     gradBlur, setGradBlur,
     gradBrightness, setGradBrightness,
+    // New color parameters
+    gradColorSaturation, setGradColorSaturation,
+    gradColorSpread, setGradColorSpread,
+    gradColorMode, setGradColorMode,
     lowEndMode,
     setLowEndMode,
     triggerNewMessage,
+    randomizeGradient
   } = useGradient();
 
-  const handleSliderChange = (setter, value) => {
+  // Refs to track active slider to prevent too many updates
+  const isChangingRef = useRef(false);
+  
+  // Use cached handlers to avoid re-creates on render
+  const handleSliderChange = useCallback((setter, value) => {
+    isChangingRef.current = true;
+    
     const finalValue = setter === setGradColorIndex ? value / 100 : value;
     setter(finalValue);
-    if (typeof triggerNewMessage === 'function') {
-      triggerNewMessage();
-    }
-  };
-
-  const handleExport = () => {
-    if (visualPanelRef?.current) {
-      const dataUrl = visualPanelRef.current.exportGradient();
-      if (dataUrl) {
-        const link = document.createElement('a');
-        link.download = 'gradient.png';
-        link.href = dataUrl;
-        link.click();
+    
+    // Delay triggering new message to avoid spamming
+    clearTimeout(isChangingRef.timeout);
+    isChangingRef.timeout = setTimeout(() => {
+      if (typeof triggerNewMessage === 'function') {
+        triggerNewMessage();
       }
-    }
-  };
+      isChangingRef.current = false;
+    }, 500);
+  }, [triggerNewMessage, setGradColorIndex]);
 
-  const generateRandomValues = () => {
-    setGradIntensity(Math.floor(Math.random() * 31) + 70);
-    setGradComplexity(Math.floor(Math.random() * 41) + 40);
-    setGradRotation(Math.floor(Math.random() * 360));
-    setGradScale(Math.floor(Math.random() * 151) + 50);
-    setGradDistortion(Math.floor(Math.random() * 31) + 40);
-    setGradColorIndex(Math.ceil(Math.random() * 10000));
-    setGradBlur(Math.floor(Math.random() * 100));
-    setGradBrightness(Math.floor(Math.random() * 100) + 35);
-  };
-
-  const handleRandomize = () => {
-    generateRandomValues();
+  // Handler for color mode changes
+  const handleColorModeChange = useCallback((mode) => {
+    setGradColorMode(mode);
     if (typeof triggerNewMessage === 'function') {
       triggerNewMessage();
     }
-  };
+  }, [setGradColorMode, triggerNewMessage]);
+
+  const handleExport = useCallback(() => {
+    if (visualPanelRef?.current?.exportGradient) {
+      visualPanelRef.current.exportGradient().then(dataUrl => {
+        if (dataUrl) {
+          const link = document.createElement('a');
+          link.download = 'gradient.png';
+          link.href = dataUrl;
+          link.click();
+        }
+      });
+    }
+  }, [visualPanelRef]);
+
+  const handleRandomize = useCallback(() => {
+    if (typeof randomizeGradient === 'function') {
+      randomizeGradient();
+    }
+  }, [randomizeGradient]);
+
+  const handleLowEndModeToggle = useCallback((e) => {
+    setLowEndMode(e.target.checked);
+  }, [setLowEndMode]);
 
   return (
     <div className="flex h-full flex-col gap-6 p-4 pt-12 text-white">
@@ -115,16 +166,40 @@ const SettingsPanel = ({ visualPanelRef }) => {
           value={gradColorIndex * 100}
           onChange={(value) => handleSliderChange(setGradColorIndex, value)}
           min={0}
-          max={1000000}
-          step="1"
+          max={1000}
+          step={1}
         />
+        
+        {/* New color controls */}
+        <Slider
+          label="COLOR_SATURATION"
+          value={gradColorSaturation * 100}
+          onChange={(value) => handleSliderChange(setGradColorSaturation, value / 100)}
+          min={30}
+          max={100}
+          step={1}
+        />
+        <Slider
+          label="COLOR_SPREAD"
+          value={gradColorSpread * 100}
+          onChange={(value) => handleSliderChange(setGradColorSpread, value / 100)}
+          min={10}
+          max={100}
+          step={1}
+        />
+        
+        <ColorModeSelector
+          value={gradColorMode}
+          onChange={handleColorModeChange}
+        />
+        
         <Slider
           label="GRAD_SPEED"
           value={gradSpeed * 25}
           onChange={(value) => handleSliderChange(setGradSpeed, value / 25)}
           min={0}
           max={100}
-          step="0.01"
+          step={1}
         />
         <Slider
           label="GRAD_BLUR"
@@ -147,9 +222,10 @@ const SettingsPanel = ({ visualPanelRef }) => {
           <input
             type="checkbox"
             checked={lowEndMode}
-            onChange={(e) => setLowEndMode(e.target.checked)}
+            onChange={handleLowEndModeToggle}
+            id="low-end-mode"
           />
-          <span className="text-xs font-bold uppercase">Low End Mode</span>
+          <label htmlFor="low-end-mode" className="text-xs font-bold uppercase">Low End Mode</label>
         </div>
       </div>
       <div className="mt-auto flex justify-between items-center">
@@ -168,6 +244,7 @@ const SettingsPanel = ({ visualPanelRef }) => {
       </div>
     </div>
   );
-};
+});
 
+SettingsPanel.displayName = 'SettingsPanel';
 export default SettingsPanel;

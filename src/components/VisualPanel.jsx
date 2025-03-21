@@ -1,68 +1,63 @@
-import React, { useRef, forwardRef, useState, useEffect } from "react";
+import React, { useRef, forwardRef, useState, useEffect, useMemo, useCallback } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { useGradient } from "../context/GradientContext";
 import { DoubleSide } from "three";
 import { vertexShader, fragmentShader } from '../shaders';
-import { isLowEndDevice, PerformanceMonitor } from '../utils/performanceUtils';
+import { isLowEndDevice, PerformanceMonitor, getBrowserCapabilities } from '../utils/performanceUtils';
 
-// Use the performance monitor as a React hook with better initial values
+// Memory-efficient performance monitor as a React hook
 function usePerformanceMonitor() {
-  const [performanceFactor, setPerformanceFactor] = useState(0);
+  const performanceFactorRef = useRef(1);
   const monitorRef = useRef(null);
   
   useEffect(() => {
     // Initialize with more balanced settings
-    monitorRef.current = new PerformanceMonitor(45, 1500);
+    monitorRef.current = new PerformanceMonitor(45, 20); // Fewer samples for faster adaptation
     
     // Check if device is low-end at startup
     const lowEndDevice = isLowEndDevice();
     if (lowEndDevice) {
-      setPerformanceFactor(0.5); // Less aggressive quality reduction
+      performanceFactorRef.current = 0.5;
     }
     
+    // Cleanup
     return () => {
       monitorRef.current = null;
     };
   }, []);
 
-  const trackFrame = (deltaTime) => {
+  // Track frame without updating state to avoid re-renders
+  const trackFrame = useCallback(() => {
     if (monitorRef.current) {
-      const quality = monitorRef.current.recordFrame();
-      // Only update state if quality changed significantly to avoid re-renders
-      if (Math.abs(quality - performanceFactor) > 0.1) {
-        setPerformanceFactor(quality);
-      }
-      return quality;
+      performanceFactorRef.current = monitorRef.current.recordFrame();
+      return performanceFactorRef.current;
     }
-    return performanceFactor;
-  };
+    return performanceFactorRef.current;
+  }, []);
 
-  return { performanceFactor, trackFrame };
+  return { performanceFactorRef, trackFrame };
 }
 
-function SwirlPlane(props) {
+// Memoized gradient plane component with optimized uniforms
+const SwirlPlane = React.memo(function SwirlPlane(props) {
   const materialRef = useRef();
   const { lowEndMode } = useGradient();
-  const lastFrame = useRef(0);
+  const lastFrameRef = useRef(0);
   const lastTimeRef = useRef(0);
   
-  const { performanceFactor, trackFrame } = usePerformanceMonitor();
+  const { performanceFactorRef, trackFrame } = usePerformanceMonitor();
   
-  // Add previous frame data for temporal smoothing
-  const prevFrameData = useRef({
+  // Use refs instead of state for frequently changing values
+  const prevFrameDataRef = useRef({
     time: 0,
-    colorIndex: props.colorIndex,
-    intensity: props.intensity,
-    complexity: props.complexity
+    colorIndex: props.colorIndex
   });
   
-  // Adaptive geometry detail based on performance and animation
-  const gridDetail = useRef(lowEndMode ? 24 : 48);
-  const frameCount = useRef(0);
+  // Adaptive geometry detail based on performance
+  const gridDetailRef = useRef(lowEndMode ? 16 : 32);
+  const frameCountRef = useRef(0);
   
-  // Add temporal smoothing factor - slower when performance is lower
-  const smoothingFactor = useRef(performanceFactor > 0.8 ? 0.3 : 0.6);
-
+  // Use a ref to avoid re-creating the uniforms object
   const uniformsRef = useRef({
     uTime: { value: 0 },
     uTimeX: { value: 0 },
@@ -73,86 +68,111 @@ function SwirlPlane(props) {
     uRotation: { value: props.rotation },
     uDistortion: { value: props.distortion },
     uColorIndex: { value: props.colorIndex },
-    uColorVariety: { value: props.colorVariety || 1.0 }, // Add color variety parameter
-    uAnimate: { value: Boolean(props.animate) }, // Ensure boolean conversion
+    uAnimate: { value: Boolean(props.animate) },
     uBlur: { value: props.blur || 0 },
-    uBrightness: { value: props.brightness / 100 }, // Normalize to 0–1
+    uBrightness: { value: props.brightness / 100 },
     uLowEndMode: { value: lowEndMode },
-    uMouse: { value: [0.5, 0.5] },
-    uPerformanceFactor: { value: performanceFactor },
-    // Add temporal smoothing uniforms
-    uPrevTime: { value: 0 },
-    uSmoothingFactor: { value: smoothingFactor.current },
-    uFrameCount: { value: 0 }
+    uPerformanceFactor: { value: 1.0 },
+    // Add new color control uniforms
+    uColorSaturation: { value: props.colorSaturation || 0.8 },
+    uColorSpread: { value: props.colorSpread || 0.5 },
+    uColorMode: { value: props.colorMode || 0 }
   });
 
+  // Optimize frame updates with a throttling mechanism
   useFrame((state) => {
     const currentTime = state.clock.getElapsedTime();
     const deltaTime = currentTime - lastTimeRef.current;
     lastTimeRef.current = currentTime;
     
-    // Track performance with our utility
-    const currentPerformanceFactor = trackFrame(deltaTime);
+    // Track performance
+    const performanceFactor = trackFrame();
     
-    // Update smoothing factor based on performance
-    smoothingFactor.current = currentPerformanceFactor > 0.7 ? 0.3 : 
-                             (currentPerformanceFactor > 0.4 ? 0.5 : 0.7);
+    // Throttle updates based on performance
+    const targetFPS = lowEndMode ? 30 : 
+                     (performanceFactor > 0.7 ? 60 : 
+                     performanceFactor > 0.4 ? 45 : 30);
     
-    // Adaptive frame rate - skip frames based on performance
-    const targetFPS = lowEndMode ? 24 : 
-                     (currentPerformanceFactor > 0.7 ? 60 : 
-                     currentPerformanceFactor > 0.4 ? 45 : 30);
-                     
-    if (currentTime - lastFrame.current < 1 / targetFPS) return;
-    lastFrame.current = currentTime;
+    if (currentTime - lastFrameRef.current < 1 / targetFPS) return;
+    lastFrameRef.current = currentTime;
     
-    // Every 100 frames, adaptively adjust geometry detail
-    frameCount.current++;
-    if (frameCount.current % 100 === 0) {
-      const newDetail = lowEndMode ? 24 : 
-                      (currentPerformanceFactor > 0.7 ? 48 : 
-                      currentPerformanceFactor > 0.5 ? 36 : 28);
-      
-      gridDetail.current = newDetail;
+    // Increment frame counter for adaptive quality changes
+    frameCountRef.current++;
+    
+    // Update adaptive geometry only occasionally to avoid GC thrashing
+    if (frameCountRef.current % 120 === 0) {
+      const newDetail = lowEndMode ? 16 : 
+                       (performanceFactor > 0.7 ? 32 : 
+                       performanceFactor > 0.5 ? 24 : 16);
+      gridDetailRef.current = newDetail;
     }
 
     if (materialRef.current) {
-      // Store previous values for temporal smoothing
-      const prevTime = uniformsRef.current.uTime.value;
+      // Get the current uniforms
+      const uniforms = uniformsRef.current;
       
-      // Update time uniforms
-      uniformsRef.current.uPrevTime.value = prevTime;
-      uniformsRef.current.uTime.value = currentTime;
-      uniformsRef.current.uTimeX.value = currentTime * 0.8 * (props.animate ? 1.0 : 0.0);
-      uniformsRef.current.uTimeY.value = currentTime * 0.6 * (props.animate ? 1.0 : 0.0);
+      // Store previous time
+      prevFrameDataRef.current.time = uniforms.uTime.value;
       
-      // Update smoothing factor
-      uniformsRef.current.uSmoothingFactor.value = smoothingFactor.current;
-      uniformsRef.current.uFrameCount.value = frameCount.current;
+      // Update time uniforms - these change every frame
+      uniforms.uTime.value = currentTime;
+      uniforms.uTimeX.value = currentTime * 0.8 * (props.animate ? 1.0 : 0.0);
+      uniforms.uTimeY.value = currentTime * 0.6 * (props.animate ? 1.0 : 0.0);
       
-      // Explicitly update animation state
-      uniformsRef.current.uAnimate.value = Boolean(props.animate);
+      // Update animation state
+      uniforms.uAnimate.value = Boolean(props.animate);
       
       // Update performance factor
-      uniformsRef.current.uPerformanceFactor.value = currentPerformanceFactor;
+      uniforms.uPerformanceFactor.value = performanceFactor;
       
-      uniformsRef.current.uIntensity.value = props.intensity;
-      uniformsRef.current.uComplexity.value = props.complexity;
-      uniformsRef.current.uScale.value = props.scale;
-      uniformsRef.current.uRotation.value = props.rotation;
-      uniformsRef.current.uDistortion.value = props.distortion;
-      uniformsRef.current.uColorIndex.value = props.colorIndex;
-      uniformsRef.current.uColorVariety.value = props.colorVariety || 1.0;
-      uniformsRef.current.uBrightness.value = props.brightness / 100;
-      uniformsRef.current.uBlur.value = props.blur || 0;
-      uniformsRef.current.uLowEndMode.value = lowEndMode;
-      uniformsRef.current.uAnimate.value = props.animate;
+      // Only update these if they've changed to avoid unnecessary GPU uploads
+      if (uniforms.uIntensity.value !== props.intensity) 
+        uniforms.uIntensity.value = props.intensity;
+      
+      if (uniforms.uComplexity.value !== props.complexity)
+        uniforms.uComplexity.value = props.complexity;
+        
+      if (uniforms.uScale.value !== props.scale)
+        uniforms.uScale.value = props.scale;
+        
+      if (uniforms.uRotation.value !== props.rotation)
+        uniforms.uRotation.value = props.rotation;
+        
+      if (uniforms.uDistortion.value !== props.distortion)
+        uniforms.uDistortion.value = props.distortion;
+        
+      if (uniforms.uColorIndex.value !== props.colorIndex) {
+        prevFrameDataRef.current.colorIndex = uniforms.uColorIndex.value;
+        uniforms.uColorIndex.value = props.colorIndex;
+      }
+        
+      if (uniforms.uBrightness.value !== props.brightness / 100)
+        uniforms.uBrightness.value = props.brightness / 100;
+        
+      if (uniforms.uBlur.value !== (props.blur || 0))
+        uniforms.uBlur.value = props.blur || 0;
+        
+      if (uniforms.uLowEndMode.value !== lowEndMode)
+        uniforms.uLowEndMode.value = lowEndMode;
+        
+      // Update new color control uniforms
+      if (uniforms.uColorSaturation.value !== props.colorSaturation)
+        uniforms.uColorSaturation.value = props.colorSaturation;
+        
+      if (uniforms.uColorSpread.value !== props.colorSpread)
+        uniforms.uColorSpread.value = props.colorSpread;
+        
+      if (uniforms.uColorMode.value !== props.colorMode)
+        uniforms.uColorMode.value = props.colorMode;
     }
   });
 
+  // Calculate grid detail based on current performance
+  const gridDetail = lowEndMode ? 16 : (performanceFactorRef.current > 0.7 ? 32 : 24);
+
   return (
     <mesh scale={[6, 6, 1]}>
-      <planeGeometry args={[1, 1, gridDetail.current, gridDetail.current]} />
+      <planeGeometry args={[1, 1, gridDetail, gridDetail]} />
       <shaderMaterial
         ref={materialRef}
         vertexShader={vertexShader}
@@ -162,6 +182,23 @@ function SwirlPlane(props) {
       />
     </mesh>
   );
+});
+
+// Create export method to capture the canvas
+function captureCanvas(canvas) {
+  return new Promise((resolve) => {
+    if (!canvas) resolve(null);
+    // Use requestAnimationFrame to ensure we capture after rendering
+    requestAnimationFrame(() => {
+      try {
+        const dataUrl = canvas.toDataURL('image/png');
+        resolve(dataUrl);
+      } catch (e) {
+        console.error("Error exporting gradient:", e);
+        resolve(null);
+      }
+    });
+  });
 }
 
 const VisualPanel = forwardRef((props, ref) => {
@@ -175,60 +212,66 @@ const VisualPanel = forwardRef((props, ref) => {
     gradColorIndex, 
     gradBlur, 
     gradBrightness,
-    gradColorVariety = 1.0,
-    animGrad, // Add animGrad from context
+    gradColorSaturation,
+    gradColorSpread,
+    gradColorMode,
+    animGrad,
   } = useGradient();
 
+  // Use ref for canvas
+  const canvasRef = useRef(null);
+  
   // Check if device is low-end at startup
   const [detectedLowEndMode, setDetectedLowEndMode] = useState(false);
   
+  // Get browser capabilities once on mount
+  const capabilities = useMemo(() => getBrowserCapabilities(), []);
+  
   useEffect(() => {
-    // Detect low-end device on mount
     setDetectedLowEndMode(isLowEndDevice());
   }, []);
   
   // Use either user-set low-end mode or auto-detected
   const effectiveLowEndMode = lowEndMode || detectedLowEndMode;
   
-  // Use the maximum pixel ratio the device supports, capped at 2
-  const pixelRatio = effectiveLowEndMode ? 1 : Math.min(2, window.devicePixelRatio);
+  // Calculate ideal pixel ratio based on performance and device
+  const pixelRatio = useMemo(() => {
+    if (effectiveLowEndMode) return 1;
+    return Math.min(capabilities.devicePixelRatio, 1.5);
+  }, [effectiveLowEndMode, capabilities.devicePixelRatio]);
 
-  // Debug animation state in component
+  // Expose capture method through the ref
   useEffect(() => {
-    console.log("Animation state:", animGrad);
-  }, [animGrad]);
+    if (ref) {
+      ref.current = {
+        exportGradient: () => captureCanvas(canvasRef.current)
+      };
+    }
+  }, [ref]);
+
+  // GL attributes optimized based on device capabilities
+  const glAttributes = useMemo(() => ({
+    antialias: !effectiveLowEndMode,
+    alpha: true,
+    depth: false, // Don't need depth testing for 2D
+    stencil: false, // Don't need stencil for 2D
+    powerPreference: effectiveLowEndMode ? 'low-power' : 'high-performance',
+    preserveDrawingBuffer: true, // Needed for image capture
+    precision: effectiveLowEndMode ? "mediump" : 
+              (capabilities.highPrecisionShaders ? "highp" : "mediump"),
+    failIfMajorPerformanceCaveat: false // Don't fail on low performance devices
+  }), [effectiveLowEndMode, capabilities.highPrecisionShaders]);
 
   return (
     <div className="w-full h-full bg-black relative">
       <div className="absolute inset-0">
         <Canvas
+          ref={canvasRef}
           frameloop="always"
-          pixelRatio={pixelRatio}
-          dpr={[1, pixelRatio]} 
-          gl={{ 
-            antialias: !effectiveLowEndMode,
-            preserveDrawingBuffer: true, 
-            alpha: true,
-            powerPreference: effectiveLowEndMode ? 'low-power' : 'high-performance',
-            precision: effectiveLowEndMode ? "mediump" : "highp",
-            depth: false,
-            stencil: false
-          }}
+          dpr={pixelRatio} 
+          gl={glAttributes}
           camera={{ position: [0, 0, 0.5], fov: 75 }}
-          // Fix the onCreated callback to safely access WebGL info
-          onCreated={({gl, scene, camera}) => {
-            // Safely log renderer info without using getParameter
-            console.log('WebGL renderer:', gl.info?.renderer || 'Unknown');
-            
-            // Optional: You can check renderer capabilities if needed
-            const isHighPerformance = !effectiveLowEndMode && 
-              gl.capabilities?.maxTextures > 8;
-              
-            // Apply any specific settings based on renderer
-            if (isHighPerformance) {
-              scene.environment = null; // Example renderer-specific setting
-            }
-          }}
+          performance={{ min: 0.5 }} // R3F-specific performance tweaks
         >
           <SwirlPlane
             intensity={Math.max(70, gradIntensity)}
@@ -237,15 +280,16 @@ const VisualPanel = forwardRef((props, ref) => {
             rotation={gradRotation}
             distortion={Math.max(40, gradDistortion)}
             colorIndex={gradColorIndex * 360} // Scale to 0-360 range
-            colorVariety={gradColorVariety}
             brightness={gradBrightness}
             blur={gradBlur}
-            lowEndMode={effectiveLowEndMode}
             animate={animGrad}
+            // Pass new color parameters
+            colorSaturation={gradColorSaturation}
+            colorSpread={gradColorSpread}
+            colorMode={gradColorMode}
           />
         </Canvas>
       </div>
-      {/* Removed the duplicate blurred layer since we now handle blur in the shader */}
     </div>
   );
 });
